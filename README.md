@@ -90,8 +90,8 @@ php -l codex-blog-abilities.php
 Push a semantic version tag to build an installable ZIP through GitHub Actions:
 
 ```bash
-git tag v0.2.0
-git push origin main v0.2.0
+git tag vX.Y.Z
+git push origin main vX.Y.Z
 ```
 
 The release artifact is named `codex-blog-abilities-<tag>.zip`.

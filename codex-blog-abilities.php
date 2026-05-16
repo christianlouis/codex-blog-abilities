@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Codex Blog Abilities
  * Description: Exposes guarded WordPress administration abilities to the WordPress MCP Adapter.
- * Version: 0.2.0
+ * Version: 0.2.1
  * Author: Codex
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -1652,20 +1652,15 @@ function codex_blog_read_seo_meta( $post_id ) {
 }
 
 function codex_blog_get_aioseo_post( $post_id ) {
-	if ( ! function_exists( 'aioseo' ) ) {
+	if ( ! class_exists( '\\AIOSEO\\Plugin\\Common\\Models\\Post' ) ) {
 		return null;
 	}
 
 	try {
-		$aioseo = aioseo();
-		if ( is_object( $aioseo ) && isset( $aioseo->post ) && is_object( $aioseo->post ) && method_exists( $aioseo->post, 'getPost' ) ) {
-			return $aioseo->post->getPost( $post_id );
-		}
+		return \AIOSEO\Plugin\Common\Models\Post::getPost( $post_id );
 	} catch ( Throwable $e ) {
 		return null;
 	}
-
-	return null;
 }
 
 function codex_blog_object_property( $object, $property ) {
@@ -1764,29 +1759,53 @@ function codex_blog_collect_seo_updates( $args ) {
 }
 
 function codex_blog_save_aioseo_meta( $post_id, $updates ) {
-	$model = codex_blog_get_aioseo_post( $post_id );
-	if ( ! $model ) {
+	if ( ! class_exists( '\\AIOSEO\\Plugin\\Common\\Models\\Post' ) ) {
 		return false;
 	}
 
-	$property_map = array(
-		'title'               => 'title',
-		'description'         => 'description',
-		'canonical_url'       => 'canonical_url',
-		'keywords'            => 'keywords',
-		'og_title'            => 'og_title',
-		'og_description'      => 'og_description',
-		'og_image_url'        => 'og_image_url',
-		'twitter_title'       => 'twitter_title',
-		'twitter_description' => 'twitter_description',
-		'twitter_image_url'   => 'twitter_image_url',
-	);
-
 	try {
+		$model = \AIOSEO\Plugin\Common\Models\Post::getPost( $post_id );
+		if ( ! is_object( $model ) || ! method_exists( $model, 'save' ) ) {
+			return false;
+		}
+
+		$model->post_id = (int) $post_id;
+
+		$property_map = array(
+			'title'               => 'title',
+			'description'         => 'description',
+			'canonical_url'       => 'canonical_url',
+			'og_title'            => 'og_title',
+			'og_description'      => 'og_description',
+			'twitter_title'       => 'twitter_title',
+			'twitter_description' => 'twitter_description',
+		);
+
 		foreach ( $property_map as $input_key => $property ) {
 			if ( array_key_exists( $input_key, $updates ) ) {
 				$model->$property = $updates[ $input_key ];
 			}
+		}
+
+		if ( array_key_exists( 'keywords', $updates ) ) {
+			$model->keywords = codex_blog_aioseo_keywords_payload( $updates['keywords'] );
+		}
+
+		if ( array_key_exists( 'focus_keyphrase', $updates ) ) {
+			$model->keyphrases = codex_blog_aioseo_keyphrases_payload( $updates['focus_keyphrase'], $model );
+		}
+
+		if ( array_key_exists( 'og_image_url', $updates ) ) {
+			codex_blog_set_aioseo_image( $model, 'og', $updates['og_image_url'] );
+		}
+
+		if ( array_key_exists( 'twitter_image_url', $updates ) ) {
+			$model->twitter_use_og = false;
+			codex_blog_set_aioseo_image( $model, 'twitter', $updates['twitter_image_url'] );
+		}
+
+		if ( array_key_exists( 'twitter_title', $updates ) || array_key_exists( 'twitter_description', $updates ) ) {
+			$model->twitter_use_og = false;
 		}
 
 		if ( ! empty( $updates['robots'] ) ) {
@@ -1799,15 +1818,76 @@ function codex_blog_save_aioseo_meta( $post_id, $updates ) {
 			}
 		}
 
-		if ( method_exists( $model, 'save' ) ) {
-			$model->save();
-			return true;
-		}
+		$model->save();
+
+		codex_blog_bust_aioseo_post_cache( $post_id, $model );
+		do_action( 'aioseo_insert_post', $post_id );
+
+		return true;
 	} catch ( Throwable $e ) {
 		return new WP_Error( 'codex_blog_aioseo_save_failed', 'AIOSEO metadata could not be saved: ' . $e->getMessage() );
 	}
+}
 
-	return false;
+function codex_blog_aioseo_keywords_payload( $keywords ) {
+	if ( ! is_string( $keywords ) ) {
+		return $keywords;
+	}
+
+	$result = array();
+	foreach ( array_filter( array_map( 'trim', explode( ',', $keywords ) ) ) as $keyword ) {
+		$result[] = array( 'value' => $keyword );
+	}
+
+	return $result;
+}
+
+function codex_blog_aioseo_keyphrases_payload( $focus_keyphrase, $model ) {
+	$existing   = codex_blog_object_property( $model, 'keyphrases' );
+	$additional = array();
+
+	if ( is_array( $existing ) && ! empty( $existing['additional'] ) && is_array( $existing['additional'] ) ) {
+		$additional = $existing['additional'];
+	} elseif ( is_object( $existing ) && ! empty( $existing->additional ) && is_array( $existing->additional ) ) {
+		$additional = $existing->additional;
+	}
+
+	return array(
+		'focus'      => array(
+			'keyphrase' => $focus_keyphrase,
+			'score'     => 0,
+			'analysis'  => array(),
+		),
+		'additional' => $additional,
+	);
+}
+
+function codex_blog_set_aioseo_image( $model, $prefix, $url ) {
+	$type_property   = $prefix . '_image_type';
+	$url_property    = $prefix . '_image_url';
+	$custom_property = $prefix . '_image_custom_url';
+
+	if ( '' === $url ) {
+		$model->$type_property   = 'default';
+		$model->$url_property    = null;
+		$model->$custom_property = null;
+		return;
+	}
+
+	$model->$type_property   = 'custom_image';
+	$model->$url_property    = $url;
+	$model->$custom_property = $url;
+}
+
+function codex_blog_bust_aioseo_post_cache( $post_id, $model ) {
+	if ( ! function_exists( 'aioseo' ) ) {
+		return;
+	}
+
+	$aioseo = aioseo();
+	if ( isset( $aioseo->meta ) && isset( $aioseo->meta->metaData ) && method_exists( $aioseo->meta->metaData, 'bustPostCache' ) ) {
+		$aioseo->meta->metaData->bustPostCache( $post_id, $model );
+	}
 }
 
 function codex_blog_update_fallback_seo_meta( $post_id, $updates ) {
