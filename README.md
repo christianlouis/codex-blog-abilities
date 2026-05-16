@@ -24,6 +24,14 @@ The plugin registers public MCP abilities under the `codex-blog/` namespace:
 - `create-post`
 - `update-post`
 - `delete-post`
+- `schedule-post`
+- `upload-media-from-url`
+- `set-featured-image`
+- `set-featured-image-from-url`
+- `remove-featured-image`
+- `get-seo-meta`
+- `update-seo-meta`
+- `audit-post-seo`
 - `list-terms`
 - `create-term`
 - `update-term`
@@ -46,6 +54,11 @@ For example, post edits require `edit_post`, plugin management requires
 
 The option update ability is intentionally restricted to a small allowlist of
 common site settings. It does not expose arbitrary `update_option()` access.
+
+SEO metadata updates use All in One SEO's runtime API when it is available and
+also write known post-meta fallbacks for compatibility. The SEO audit is
+deterministic: it checks content and metadata structure but does not generate
+ranking claims.
 
 Deactivation of `mcp-adapter` and this plugin is blocked by default so an MCP
 client does not accidentally remove its own control plane.
@@ -71,6 +84,17 @@ Run a PHP syntax check before deploying:
 ```bash
 php -l codex-blog-abilities.php
 ```
+
+## Releases
+
+Push a semantic version tag to build an installable ZIP through GitHub Actions:
+
+```bash
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+The release artifact is named `codex-blog-abilities-<tag>.zip`.
 
 ## License
 

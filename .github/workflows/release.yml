@@ -1,0 +1,60 @@
+name: Build release ZIP
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Lint plugin
+        run: php -l codex-blog-abilities.php
+
+      - name: Build ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLUGIN_SLUG="codex-blog-abilities"
+          VERSION="${GITHUB_REF_NAME:-manual}"
+          ZIP_NAME="${PLUGIN_SLUG}-${VERSION}.zip"
+
+          rm -rf build
+          mkdir -p "build/${PLUGIN_SLUG}"
+
+          rsync -a \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "build" \
+            --exclude "*.zip" \
+            ./ "build/${PLUGIN_SLUG}/"
+
+          cd build
+          zip -r "${ZIP_NAME}" "${PLUGIN_SLUG}"
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-blog-abilities-zip
+          path: build/codex-blog-abilities-*.zip
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" build/codex-blog-abilities-"${GITHUB_REF_NAME}".zip --generate-notes
